@@ -1,18 +1,18 @@
 from app.llm import LLM
 from app.agent import Agent
-from app.tools import weather_tool
+from app.tools import wikipedia_tool
 
 
 llm = LLM()
 
 agent = Agent(
     llm=llm,
-    tool_schemas=[weather_tool]
+    tool_schemas=[wikipedia_tool]
 )
 
 
 answer = agent.run(
-    "What is the weather like in Madrid?"
+    "Who was Alan Turing?"
 )
 
 
