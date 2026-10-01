@@ -50,6 +50,45 @@ def search_wikipedia(query):
 
     return results
 
+def get_wikipedia_page(title):
+    url = "https://en.wikipedia.org/w/api.php"
+
+    print("He llegado a wikipage")
+    
+    params = {
+        "action": "parse",
+        "page": title,
+        "prop": "text",
+        "format": "json",
+        "redirects": True
+    }
+    
+    response = requests.get(
+        url,
+        params=params,
+        headers={
+            "User-Agent": "AIResearchAgent project"
+        },
+        timeout=10
+    )
+    response.raise_for_status()
+
+    data = response.json()
+
+    html = data["parse"]["text"]["*"]
+
+    soup = BeautifulSoup(html, "html.parser")
+
+    text = soup.get_text(" ", strip=True)
+
+    return {
+        "title": data["parse"]["title"],
+        "url": (
+            "https://en.wikipedia.org/wiki/"
+            + data["parse"]["title"].replace(" ", "_")
+        ),
+        "content": text
+    }
 
 weather_tool = {
     "type": "function",
@@ -73,7 +112,10 @@ wikipedia_tool = {
     "type": "function",
     "function": {
         "name": "search_wikipedia",
-        "description": "Search Wikipedia for information about a topic.",
+        "description": ("Search Wikipedia to find relevant articles about a topic. "
+            "Use this tool when you need to discover relevant Wikipedia pages. "
+            "After finding a relevant page, use get_wikipedia_page to retrieve "
+            "its detailed content before answering."),
         "parameters": {
             "type": "object",
             "properties": {
@@ -87,9 +129,29 @@ wikipedia_tool = {
     }
 }
 
+wikipedia_page_tool = {
+    "type": "function",
+    "function": {
+        "name": "get_wikipedia_page",
+        "description": ("Retrieve the detailed content of a specific Wikipedia page. "
+            "Use this after search_wikipedia when you need reliable and "
+            "detailed information from the selected article."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "The exact title of the Wikipedia page to retrieve."
+                }
+            },
+            "required": ["title"]
+        }
+    }
+}
 
 TOOLS = {
     "get_current_weather": get_current_weather,
-    "search_wikipedia": search_wikipedia
+    "search_wikipedia": search_wikipedia,
+    "get_wikipedia_page": get_wikipedia_page
 
 }

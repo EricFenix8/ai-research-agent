@@ -27,10 +27,31 @@ class Agent:
 
     def run(self, user_message, max_iterations = 5):
 
+        system_prompt = """
+        You are a research assistant.
+
+        Your goal is to provide accurate answers based on information
+        retrieved from available tools.
+
+        When answering factual questions:
+
+        1. Use search tools to find relevant sources.
+        2. After finding a relevant source, retrieve its detailed content
+        using the appropriate tool before answering.
+        3. Base your final answer on the retrieved information.
+        4. Do not invent facts that are not supported by the retrieved sources.
+        5. Do not ask the user whether you should retrieve a source.
+        If retrieving the source is useful, do it yourself.
+        """
+        
         messages = [
             {
-                "role": "user",
-                "content": user_message
+                "role": "system",
+                "content": system_prompt
+            },
+            {
+                "role":"user",
+                "content":user_message
             }
         ]
 
@@ -39,6 +60,9 @@ class Agent:
         while iteration < max_iterations:
             
             iteration += 1
+
+            print("\n========== MESSAGES ==========")
+
 
             # Pregunta al LLM qué hacer
             response = self.llm.generate(
@@ -60,8 +84,13 @@ class Agent:
             for tool_call in assistant_message["tool_calls"]:
 
                 result = self.execute_tool(tool_call)
+                print("\nTOOL:", tool_call["function"]["name"])
+
+                if isinstance(result, dict):
+                    print("TITLE:", result.get("title"))
+                    print("URL:", result.get("url"))
+                    print("CONTENT LENGTH:", len(result.get("content", "")))
                 print("\nTOOL RESULT")
-                print(result)
                 
                 messages.append({
                     "role": "tool",
