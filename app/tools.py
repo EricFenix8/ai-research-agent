@@ -1,7 +1,25 @@
+import ast
 import re
 
 import requests
 from bs4 import BeautifulSoup
+
+
+ALLOWED_NODES = {
+    ast.Add,
+    ast.Sub,
+    ast.Mult,
+    ast.Div,
+    ast.FloorDiv,
+    ast.Mod,
+    ast.Pow,
+    ast.USub,
+    ast.UAdd,
+    ast.Constant,
+    ast.Expression,
+    ast.BinOp,
+    ast.UnaryOp,
+}
 
 
 NON_ARTICLE_TITLE_TOKENS = {
@@ -94,6 +112,70 @@ def _clean_wikipedia_text(text):
 
 def get_current_weather(city):
     return f"The weather in {city} is sunny."
+
+
+def calculate(expression):
+    if not isinstance(expression, str):
+        raise ValueError("expression must be a string")
+
+    cleaned = expression.strip()
+    if not cleaned:
+        raise ValueError("expression cannot be empty")
+
+    try:
+        parsed = ast.parse(cleaned, mode="eval")
+    except SyntaxError as exc:
+        raise ValueError(f"Invalid expression: {exc.msg}") from exc
+
+    for node in ast.walk(parsed):
+        if not isinstance(node, tuple(ALLOWED_NODES)):
+            raise ValueError(f"Unsupported expression: {type(node).__name__}")
+
+    def _eval(node):
+        if isinstance(node, ast.Constant):
+            if not isinstance(node.value, (int, float)):
+                raise ValueError("Only numeric constants are allowed")
+            return node.value
+
+        if isinstance(node, ast.BinOp):
+            left = _eval(node.left)
+            right = _eval(node.right)
+
+            if isinstance(node.op, ast.Add):
+                return left + right
+            if isinstance(node.op, ast.Sub):
+                return left - right
+            if isinstance(node.op, ast.Mult):
+                return left * right
+            if isinstance(node.op, ast.Div):
+                return left / right
+            if isinstance(node.op, ast.FloorDiv):
+                return left // right
+            if isinstance(node.op, ast.Mod):
+                return left % right
+            if isinstance(node.op, ast.Pow):
+                return left ** right
+            raise ValueError(f"Unsupported binary operator: {type(node.op).__name__}")
+
+        if isinstance(node, ast.UnaryOp):
+            value = _eval(node.operand)
+            if isinstance(node.op, ast.UAdd):
+                return +value
+            if isinstance(node.op, ast.USub):
+                return -value
+            raise ValueError(f"Unsupported unary operator: {type(node.op).__name__}")
+
+        if isinstance(node, ast.Expression):
+            return _eval(node.body)
+
+        raise ValueError(f"Unsupported expression node: {type(node).__name__}")
+
+    result = _eval(parsed)
+    return {
+        "expression": cleaned,
+        "result": result,
+    }
+
 
 def search_wikipedia(query):
 
@@ -213,6 +295,24 @@ weather_tool = {
     }
 }
 
+calculator_tool = {
+    "type": "function",
+    "function": {
+        "name": "calculate",
+        "description": "Safely evaluate a numeric expression using arithmetic operators.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "expression": {
+                    "type": "string",
+                    "description": "A mathematical expression such as 2 + 3 * 4 or (10 / 2) + 5."
+                }
+            },
+            "required": ["expression"]
+        }
+    }
+}
+
 wikipedia_tool = {
     "type": "function",
     "function": {
@@ -256,6 +356,7 @@ wikipedia_page_tool = {
 
 TOOLS = {
     "get_current_weather": get_current_weather,
+    "calculate": calculate,
     "search_wikipedia": search_wikipedia,
     "get_wikipedia_page": get_wikipedia_page
 
