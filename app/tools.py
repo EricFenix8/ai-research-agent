@@ -1,5 +1,95 @@
+import re
+
 import requests
 from bs4 import BeautifulSoup
+
+
+NON_ARTICLE_TITLE_TOKENS = {
+    "book", "books", "film", "films", "movie", "movies", "biography",
+    "biographies", "novel", "novels", "play", "plays", "album",
+    "albums", "song", "songs", "episode", "episodes", "series",
+    "guide", "manual", "documentary", "documentaries", "tv",
+    "theatre", "theater"
+}
+
+
+def _normalize_tokens(value):
+    return [token for token in re.split(r"[^a-z0-9]+", (value or "").lower()) if token]
+
+
+def _wikipedia_result_priority(query, title):
+    q = (query or "").strip()
+    t = (title or "").strip()
+
+    if not q or not t:
+        return -10_000
+
+    q_tokens = _normalize_tokens(q)
+    t_tokens = _normalize_tokens(t)
+    main_title = t.split(":", 1)[0].strip()
+    main_tokens = _normalize_tokens(main_title)
+
+    score = 0
+
+    if t.lower() == q.lower():
+        score += 600
+    elif t.lower().startswith(q.lower()):
+        score += 350
+    elif q.lower().startswith(t.lower()):
+        score += 250
+    elif q.lower() in t.lower():
+        score += 200
+
+    overlap = sum(1 for token in q_tokens if token in t_tokens)
+    score += overlap * 80
+
+    main_overlap = sum(1 for token in q_tokens if token in main_tokens)
+    score += main_overlap * 60
+
+    if ":" in t:
+        # Subtitle pages are often books, biographies or related works, not the main article.
+        score -= 200 if main_overlap < max(2, len(q_tokens)) else 50
+
+    if any(token in t_tokens for token in NON_ARTICLE_TITLE_TOKENS):
+        score -= 300
+
+    if "by " in t.lower() and main_overlap < len(q_tokens):
+        score -= 150
+
+    if main_tokens and main_tokens[0] in q_tokens:
+        score += 50
+
+    return score
+
+
+FORBIDDEN_WIKIPEDIA_TITLES = {
+    "references",
+    "bibliography",
+    "further reading",
+    "external links",
+    "see also",
+    "notes",
+    "citations",
+    "sources",
+    "works cited",
+    "references and notes",
+    "notes and references",
+    "further reading and external links",
+}
+
+
+def _clean_wikipedia_text(text):
+    cleaned = re.sub(r"\s+", " ", text).strip()
+    lower = cleaned.lower()
+
+    for marker in sorted(FORBIDDEN_WIKIPEDIA_TITLES, key=len, reverse=True):
+        pattern = rf"\b{re.escape(marker)}\b\s*(?:\[ edit \])?"
+        match = re.search(pattern, lower)
+        if match:
+            cleaned = cleaned[:match.start()].strip()
+            break
+
+    return cleaned
 
 
 def get_current_weather(city):
@@ -45,8 +135,14 @@ def search_wikipedia(query):
             "url": (
                 "https://en.wikipedia.org/wiki/"
                 + result["title"].replace(" ", "_")
-            )
+            ),
+            "_priority": _wikipedia_result_priority(query, result["title"])
         })
+
+    results.sort(key=lambda item: item["_priority"], reverse=True)
+
+    for result in results:
+        result.pop("_priority", None)
 
     return results
 
@@ -79,7 +175,16 @@ def get_wikipedia_page(title):
 
     soup = BeautifulSoup(html, "html.parser")
 
+    # Remove sections that are not part of the main article content
+    for element in soup.select(
+        ".mw-references-wrap, .reflist, .navbox, .vertical-navbox, "
+        ".metadata, .ambox, .hatnote, .toc, table, sup.reference, "
+        "div#toc, div.thumb, div.floatright, div.floatleft, .mw-editsection"
+    ):
+        element.decompose()
+
     text = soup.get_text(" ", strip=True)
+    text = _clean_wikipedia_text(text)
 
     return {
         "title": data["parse"]["title"],

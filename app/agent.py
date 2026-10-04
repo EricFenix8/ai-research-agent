@@ -1,14 +1,37 @@
 from app.llm import LLM
 from app.tools import TOOLS
+from app.retriever import Retriever
 import json
+
 
 class Agent:
 
     def __init__(self, llm, tool_schemas):
         self.llm = llm
         self.tool_schemas = tool_schemas
+        self.retriever = Retriever(chunk_size=500, top_k=3)
 
-    def execute_tool(self, tool_call):
+    def _attach_relevant_context(self, tool_name, result, query):
+        if tool_name != "get_wikipedia_page":
+            return result
+
+        if not isinstance(result, dict) or "content" not in result:
+            return result
+
+        page_text = result["content"]
+        if not page_text:
+            return result
+
+        relevant_chunks = self.retriever.retrieve(query, page_text)
+        if not relevant_chunks:
+            return result
+
+        focused_content = "\n\n".join(chunk["text"] for chunk in relevant_chunks)
+        result["content"] = focused_content
+        result["retrieved_chunks"] = relevant_chunks
+        return result
+
+    def execute_tool(self, tool_call, query=None):
         function_name = tool_call["function"]["name"]
         arguments = tool_call["function"]["arguments"]
         
@@ -23,7 +46,7 @@ class Agent:
         except Exception as error:
             return f"Error executing tool '{function_name}': {error}"
 
-        return result
+        return self._attach_relevant_context(function_name, result, query)
 
     def run(self, user_message, max_iterations = 5):
 
@@ -38,9 +61,12 @@ class Agent:
         1. Use search tools to find relevant sources.
         2. After finding a relevant source, retrieve its detailed content
         using the appropriate tool before answering.
-        3. Base your final answer on the retrieved information.
-        4. Do not invent facts that are not supported by the retrieved sources.
-        5. Do not ask the user whether you should retrieve a source.
+        3. Prefer the canonical article page that matches the topic exactly.
+           Do not choose book, biography, film, or subtitle pages when the
+           main article page is available.
+        4. Base your final answer on the retrieved information.
+        5. Do not invent facts that are not supported by the retrieved sources.
+        6. Do not ask the user whether you should retrieve a source.
         If retrieving the source is useful, do it yourself.
         """
         
@@ -61,7 +87,6 @@ class Agent:
             
             iteration += 1
 
-            print("\n========== MESSAGES ==========")
 
 
             # Pregunta al LLM qué hacer
@@ -83,18 +108,20 @@ class Agent:
             # Ejecuta cada herramienta requerida
             for tool_call in assistant_message["tool_calls"]:
 
-                result = self.execute_tool(tool_call)
-                print("\nTOOL:", tool_call["function"]["name"])
+                tool_name = tool_call["function"]["name"]
+                result = self.execute_tool(tool_call, query=user_message)
+                print("\nTOOL:", tool_name)
 
                 if isinstance(result, dict):
                     print("TITLE:", result.get("title"))
                     print("URL:", result.get("url"))
                     print("CONTENT LENGTH:", len(result.get("content", "")))
-                print("\nTOOL RESULT")
+                    if "retrieved_chunks" in result:
+                        print("RELEVANT CHUNKS:", len(result["retrieved_chunks"]))
                 
                 messages.append({
                     "role": "tool",
-                    "tool_name": tool_call["function"]["name"],
+                    "tool_name": tool_name,
                     "content": json.dumps(result, ensure_ascii=False)
                 })
                 
